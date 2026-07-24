@@ -53,11 +53,11 @@ Na komputerze uruchom **`autostart-wylacz.bat`**. Od teraz wszystko robi chmura.
 
 ## Jak to się zachowuje
 - **Znajdzie nowe oferty** → pinguje rolę `@mieszkania` i wrzuca ogłoszenia.
-- **Nie znajdzie nic nowego** → pisze `not found` (potwierdzenie, że sprawdził).
+- **Nie znajdzie nic nowego** → nic nie pisze (cisza).
 
 ## Dostrajanie
-- **Za dużo „not found"?** W pliku `bot.py` w sekcji `DEFAULT_CONFIG` ustaw
-  `"notify_when_empty": False`, zrób `git commit -am "cisza" && git push`.
+- **Chcesz jednak potwierdzenie „not found"?** W `bot.py` w `DEFAULT_CONFIG` ustaw
+  `"notify_when_empty": True`, potem `git commit -am "not found" && git push`.
 - **Rzadsze sprawdzanie?** W `.github/workflows/bot.yml` zmień `*/15` na `*/30` (co 30 min).
 - **Inne kryteria** (cena, dzielnice)? Edytuj `DEFAULT_CONFIG` w `bot.py`, potem commit + push.
 

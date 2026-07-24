@@ -74,8 +74,8 @@ DEFAULT_CONFIG = {
 
     # Ping roli, gdy znajdzie nowe oferty (ID roli @mieszkania; puste = bez pingu).
     "role_id": "",
-    # Gdy w danym sprawdzeniu nie ma nowych ofert - napisz "not found".
-    "notify_when_empty": True,
+    # Gdy w danym sprawdzeniu nie ma nowych ofert - domyslnie NIC nie pisz (cisza).
+    "notify_when_empty": False,
     "not_found_text": "not found",
 
     "poll_interval_seconds": 900,  # co ile sekund sprawdzac (900 = 15 min)
