@@ -1,0 +1,5 @@
+# Prywatne / lokalne - NIE wysylac do repo (webhook = sekret!)
+config.json
+seen.json
+__pycache__/
+*.pyc

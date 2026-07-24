@@ -1,0 +1,43 @@
+name: mieszkania-bot
+
+# Uruchamia sie w chmurze GitHub co 15 minut - komputer moze byc wylaczony.
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch: {}   # pozwala uruchomic recznie z zakladki Actions
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mieszkania-bot
+  cancel-in-progress: false
+
+jobs:
+  poll:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Pobierz kod
+        uses: actions/checkout@v4
+
+      - name: Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # Pamiec o juz wyslanych ogloszeniach (przenoszona miedzy uruchomieniami).
+      - name: Przywroc seen.json
+        uses: actions/cache@v4
+        with:
+          path: seen.json
+          key: seen-${{ github.run_id }}
+          restore-keys: |
+            seen-
+
+      - name: Sprawdz oferty i wyslij na Discord
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+          ROLE_ID: ${{ secrets.ROLE_ID }}
+          RUN_ONCE: "1"
+        run: python bot.py
