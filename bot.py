@@ -44,7 +44,7 @@ OTODOM_URL = "https://www.otodom.pl/pl/wyniki/wynajem/mieszkanie/dolnoslaskie/wr
 
 DEFAULT_CONFIG = {
     "discord_webhook": "WKLEJ_TUTAJ_URL_WEBHOOKA",
-    "bot_name": "ukrainiec jebany",
+    "bot_name": "bot mieszkania",
     "sources": {"olx": True, "otodom": True},
 
     "min_area": 40,               # minimalny metraz [m2]
