@@ -78,7 +78,7 @@ DEFAULT_CONFIG = {
     "notify_when_empty": False,
     "not_found_text": "not found",
 
-    "poll_interval_seconds": 900,  # co ile sekund sprawdzac (900 = 15 min)
+    "poll_interval_seconds": 60,   # co ile sekund sprawdzac (60 = 1 min)
     "first_run_posts": 5,          # ile aktualnych ofert wyslac przy pierwszym starcie
     "max_posts_per_run": 25,       # bezpiecznik przed zalaniem kanalu
     "run_once": False              # True = jedno sprawdzenie i koniec
@@ -492,11 +492,13 @@ def run_once(cfg, seen, first_run):
         post_to_discord(cfg["discord_webhook"], [], username=name,
                         content="<@&%s> 🔔 %d nowych ofert!" % (rid, len(fresh)),
                         allowed_mentions={"roles": [rid]})
-    for o in fresh:
+    for i, o in enumerate(fresh):
+        if i:
+            time.sleep(0.3)   # odstep tylko MIEDZY wysylkami (limit Discorda);
+                              # pierwsza oferta leci natychmiast, bez czekania
         post_to_discord(cfg["discord_webhook"], [to_embed(o, cfg)], username=name)
         print("   + [%s] %s | %s | %s" % (o["source"], zl(o["price"]),
               o.get("district"), o["title"][:55]))
-        time.sleep(1)
     save_seen(seen)
 
 
@@ -509,8 +511,15 @@ def main():
     run_once(cfg, seen, first_run)
     if cfg["run_once"]:
         return
+    # W chmurze (GitHub Actions) job ma limit czasu - konczymy sami, zeby zdazyc
+    # zapisac cache seen.json; kolejne uruchomienie startuje z crona.
+    max_minutes = to_number(os.environ.get("MAX_MINUTES"))
+    deadline = (time.time() + max_minutes * 60) if max_minutes else None
     while True:
         try:
+            if deadline and time.time() + cfg["poll_interval_seconds"] > deadline:
+                print("[%s] Limit czasu uruchomienia - koniec." % now())
+                break
             time.sleep(cfg["poll_interval_seconds"])
             run_once(cfg, seen, first_run=False)
         except KeyboardInterrupt:

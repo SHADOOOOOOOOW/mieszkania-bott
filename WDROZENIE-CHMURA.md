@@ -1,6 +1,6 @@
 # Wdrożenie w chmurze (24/7, komputer wyłączony)
 
-Bot będzie się uruchamiał **na serwerach GitHuba co 15 minut** — Twój PC może być wyłączony.
+Bot będzie się uruchamiał **na serwerach GitHuba co minutę** — Twój PC może być wyłączony.
 Za darmo. Poniżej 6 kroków (~5 minut).
 
 ---
@@ -44,7 +44,7 @@ Dodaj **dwa** sekrety:
 - Wejdź w zakładkę **Actions**. Jeśli pojawi się prośba — kliknij, że rozumiesz i włącz workflowy.
 - Wybierz workflow **„mieszkania-bot"** → **Run workflow** → **Run** (ręczne uruchomienie).
 - Po chwili na Discordzie pojawi się **„✅ Bot uruchomiony"** + kilka aktualnych ofert.
-- Od tej pory bot chodzi **sam co 15 minut** — nic nie musisz robić.
+- Od tej pory bot chodzi **sam co minutę** — nic nie musisz robić.
 
 ## 6. Wyłącz wersję lokalną (żeby nie było podwójnych wiadomości)
 Na komputerze uruchom **`autostart-wylacz.bat`**. Od teraz wszystko robi chmura.

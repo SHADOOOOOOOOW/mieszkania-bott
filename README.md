@@ -1,7 +1,7 @@
 # Bot Discord — mieszkania Wrocław (OLX + Otodom)
 
 Monitoruje nowe ogłoszenia **wynajmu mieszkań we Wrocławiu** na **OLX i Otodom** i wysyła je
-na Twój kanał Discord. Sprawdza co 15 minut i wrzuca **tylko nowe** oferty.
+na Twój kanał Discord. Sprawdza co minutę i wrzuca **tylko nowe** oferty.
 
 **Domyślne kryteria** (do zmiany w `config.json`):
 - Dzielnice: **Śródmieście, Stare Miasto, Ołbin, Plac Grunwaldzki, Nadodrze + okolice PWR**
@@ -20,7 +20,7 @@ Bot nie ma żadnych zależności — działa na czystym Pythonie. Nic nie trzeba
 Bot jest zarejestrowany jako zadanie Windows **„MieszkaniaBot"**, które:
 - **startuje automatycznie przy każdym zalogowaniu**,
 - chodzi **w tle, bez widocznego okna**,
-- co 15 minut sprawdza OLX + Otodom i wrzuca nowe oferty na Discorda.
+- co minutę sprawdza OLX + Otodom i wrzuca nowe oferty na Discorda.
 
 > ⚠️ „Online" = działa, gdy komputer jest włączony i jesteś zalogowany. Gdy komputer śpi
 > lub jest wyłączony, bot też śpi. Żeby chodził **naprawdę 24/7**, trzeba go postawić na
@@ -51,7 +51,7 @@ Bot jest zarejestrowany jako zadanie Windows **„MieszkaniaBot"**, które:
 | `district_blocklist` | Dzielnice **zawsze odrzucane**: domyślnie `["Psie Pole"]` |
 | `title_keywords` | Słowa (tytuł / osiedle / ulica), które od razu kwalifikują ofertę |
 | `shower_filter` | `"exclude_bath_only"` (domyślne), `"required"`, lub `"off"` |
-| `poll_interval_seconds` | Co ile sekund sprawdzać (900 = 15 min) |
+| `poll_interval_seconds` | Co ile sekund sprawdzać (60 = 1 min) |
 | `first_run_posts` | Ile ofert wysłać przy pierwszym starcie |
 | `max_posts_per_run` | Limit ogłoszeń na jedno sprawdzenie |
 | `run_once` | `true` = jedno sprawdzenie i koniec |

@@ -1,6 +1,10 @@
 name: mieszkania-bot
 
-# Uruchamia sie w chmurze GitHub co 15 minut - komputer moze byc wylaczony.
+# Sprawdza oferty co MINUTE - komputer moze byc wylaczony.
+# GitHub cron nie umie "co minute" (min. 5 min i bywa opozniony), wiec jeden
+# przebieg zyje ~50 minut i sam odpytuje co 60 s. Cron co 15 min tylko pilnuje,
+# zeby po zakonczeniu przebiegu od razu wystartowal nastepny (concurrency
+# trzyma dokladnie jeden aktywny + jeden w kolejce).
 on:
   schedule:
     - cron: "*/15 * * * *"
@@ -16,7 +20,7 @@ concurrency:
 jobs:
   poll:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 55
     steps:
       - name: Pobierz kod
         uses: actions/checkout@v4
@@ -39,5 +43,5 @@ jobs:
         env:
           DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
           ROLE_ID: ${{ secrets.ROLE_ID }}
-          RUN_ONCE: "1"
+          MAX_MINUTES: "50"   # konczy sie sam przed timeoutem, by zapisac cache
         run: python bot.py
