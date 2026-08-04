@@ -52,7 +52,10 @@ Bot jest zarejestrowany jako zadanie Windows **„MieszkaniaBot"**, które:
 | `title_keywords` | Słowa (tytuł / osiedle / ulica), które od razu kwalifikują ofertę |
 | `shower_filter` | `"exclude_bath_only"` (domyślne), `"required"`, lub `"off"` |
 | `poll_interval_seconds` | Co ile sekund sprawdzać (60 = 1 min) |
-| `first_run_posts` | Ile ofert wysłać przy pierwszym starcie |
+| `max_offer_age_hours` | Maks. wiek oferty liczony od **pierwszej** publikacji (domyślnie 72 h); `0` = wyłącz |
+| `dedup_by_content` | `true` = rozpoznaje tę samą ofertę po treści i zdjęciu, nie tylko po ID |
+| `seen_retention_days` | Ile dni pamiętać wysłane oferty (domyślnie 60) |
+| `first_run_posts` | Ile ofert wysłać przy pierwszym starcie (domyślnie `0` = cisza) |
 | `max_posts_per_run` | Limit ogłoszeń na jedno sprawdzenie |
 | `run_once` | `true` = jedno sprawdzenie i koniec |
 
@@ -65,6 +68,30 @@ Przykłady:
 - Wyłączyć jedno źródło: `"sources": {"olx": true, "otodom": false}`.
 
 ---
+
+## Bez powtórek i „odświeżonych" ofert
+
+Ta sama oferta nie przyjdzie drugi raz — bot pilnuje tego na cztery sposoby:
+
+1. **Wiek oferty** (`max_offer_age_hours`, domyślnie 72 h) — liczony od **pierwszej**
+   publikacji (OLX `created_time`, Otodom `dateCreatedFirst`). Ogłoszenie „odświeżone"
+   / podbite wraca na górę listy, ale jego pierwotna data się nie zmienia, więc bot
+   je pomija.
+2. **Odcisk treści** — tytuł + metraż + pokoje + dzielnica. Łapie ofertę **wystawioną
+   ponownie z nowym ID** (skasowana i dodana od nowa, też po zmianie ceny).
+3. **Zdjęcie** — identyfikator z CDN. OLX i Otodom trzymają zdjęcia na tym samym
+   serwerze, więc to samo mieszkanie wystawione w obu serwisach leci tylko raz.
+4. **Trwała pamięć** (`seen.json`) — zapis atomowy i **przed** wysyłką, z datami i
+   czyszczeniem po `seen_retention_days`. Wcześniej plik potrafił zgubić część
+   wpisów przy przycinaniu.
+
+Dodatkowo `first_run_posts` domyślnie wynosi **0**: przy pierwszym starcie (albo gdy
+w chmurze przepadnie cache `seen.json`) bot tylko zapamiętuje aktualny stan i nic nie
+wysyła — właśnie to powodowało powtórne wysyłanie tych samych 5 ofert. Ustaw np.
+`"first_run_posts": 3`, jeśli chcesz podgląd przy starcie.
+
+Jeśli któraś oferta zostanie odrzucona za ostro (np. bot ma pokazywać też starsze
+ogłoszenia): zwiększ `max_offer_age_hours` albo ustaw `"dedup_by_content": false`.
 
 ## Jak działa lokalizacja
 
