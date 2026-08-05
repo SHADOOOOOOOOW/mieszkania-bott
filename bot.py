@@ -8,7 +8,7 @@ Kryteria (domyslne, do zmiany w config.json):
   - dzielnice: Srodmiescie, Stare Miasto, Olbin, Plac Grunwaldzki, Nadodrze + okolice PWR
   - BEZ Psiego Pola
   - min. 40 m2, 2 lub 3 pokoje
-  - najem do 3000 zl, z czynszem do 4000 zl
+  - najem od 2500 do 3000 zl, z czynszem do 4000 zl
   - tylko CALE mieszkania (pokoje/stancje/wspollokatorzy odrzucane)
   - odrzuca oferty wspominajace tylko wanne (bez info o lazience -> przepuszcza)
   - bez powtorek: pomija oferty odswiezone/wystawione ponownie (nawet z nowym id)
@@ -51,6 +51,7 @@ DEFAULT_CONFIG = {
     "sources": {"olx": True, "otodom": True},
 
     "min_area": 40,               # minimalny metraz [m2]
+    "min_price": 2500,            # min. cena najmu (bez czynszu) [zl]; 0 = wylaczone
     "max_price": 3000,            # maks. cena najmu (bez czynszu) [zl]
     "max_total": 4000,            # maks. cena + czynsz [zl]; 0 = wylaczone
     "rooms": [2, 3],              # dozwolona liczba pokoi
@@ -331,6 +332,8 @@ def olx_url(cfg, limit=50):
         "filter_float_m:from": cfg["min_area"],
         "sort_by": "created_at:desc",
     }
+    if cfg.get("min_price"):
+        params["filter_float_price:from"] = cfg["min_price"]
     query = urllib.parse.urlencode(params, safe=":")
     room_map = {1: "one", 2: "two", 3: "three", 4: "four"}
     parts = ["filter_enum_rooms[%d]=%s" % (i, room_map[r])
@@ -393,6 +396,8 @@ def otodom_url(cfg):
         "priceMax": cfg["max_price"], "areaMin": cfg["min_area"],
         "roomsNumber": "[%s]" % ",".join(rooms),
     }
+    if cfg.get("min_price"):
+        params["priceMin"] = cfg["min_price"]
     return OTODOM_URL + "?" + urllib.parse.urlencode(params)
 
 
@@ -534,6 +539,8 @@ def matches(offer, cfg):
     if offer["rooms"] not in cfg["rooms"]:
         return False
     if offer["price"] is None or offer["price"] > cfg["max_price"]:
+        return False
+    if cfg.get("min_price") and offer["price"] < cfg["min_price"]:
         return False
     if cfg.get("max_total") and offer["total"] and offer["total"] > cfg["max_total"]:
         return False
@@ -685,10 +692,12 @@ def run_once(cfg, seen, first_run):
         post_to_discord(cfg["discord_webhook"], [{
             "title": "✅ Bot uruchomiony",
             "description": ("Monitoruje OLX + Otodom (Wroclaw).\n"
-                            "Kryteria: cale mieszkania (bez pokoi), {}+ m2, {} pok., najem do {}, z czynszem do {}, wybrane dzielnice (bez Psiego Pola).\n"
+                            "Kryteria: cale mieszkania (bez pokoi), {}+ m2, {} pok., najem {}, z czynszem do {}, wybrane dzielnice (bez Psiego Pola).\n"
                             "Aktualnie pasujacych: **{}**. Bede wysylac tylko *nowe* (bez odswiezonych i powtorek).".format(
                                 cfg["min_area"], "/".join(map(str, cfg["rooms"])),
-                                zl(cfg["max_price"]), zl(cfg["max_total"]), len(matching))),
+                                ("od %s do %s" % (zl(cfg["min_price"]), zl(cfg["max_price"])))
+                                if cfg.get("min_price") else ("do " + zl(cfg["max_price"])),
+                                zl(cfg["max_total"]), len(matching))),
             "color": 0x3498db}], username=name)
         # limit = 0 -> nie wysylamy nic, tylko zapamietujemy stan (bez powtorek
         # po utracie cache seen.json w chmurze).

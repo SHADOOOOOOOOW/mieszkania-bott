@@ -8,7 +8,7 @@ na Twój kanał Discord. Sprawdza co minutę i wrzuca **tylko nowe** oferty.
 - **Bez Psiego Pola** (i innych dzielnic spoza listy)
 - **Tylko całe mieszkania** — pokoje, stancje i „szukam współlokatora" są odrzucane
 - Min. **40 m²**, **2 lub 3 pokoje**
-- Najem do **3000 zł**, łącznie z czynszem do **4000 zł**
+- Najem od **2500 zł** do **3000 zł**, łącznie z czynszem do **4000 zł**
 - **Prysznic**: odrzuca oferty, które w opisie mówią *tylko o wannie*
   (oferty bez info o łazience przechodzą — oznaczone ❔, dopytaj właściciela)
 
@@ -43,6 +43,7 @@ Bot jest zarejestrowany jako zadanie Windows **„MieszkaniaBot"**, które:
 | `bot_name` | Nazwa, pod którą bot pisze na kanale |
 | `sources` | Które serwisy sprawdzać, np. `{"olx": true, "otodom": true}` |
 | `min_area` | Minimalny metraż (m²) |
+| `min_price` | Min. cena najmu bez czynszu (zł); `0` = wyłącz |
 | `max_price` | Maks. cena najmu bez czynszu (zł) |
 | `max_total` | Maks. cena **z czynszem** (zł); `0` = wyłącz |
 | `rooms` | Lista dozwolonej liczby pokoi, np. `[2, 3]` |
