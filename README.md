@@ -6,6 +6,7 @@ na Twój kanał Discord. Sprawdza co minutę i wrzuca **tylko nowe** oferty.
 **Domyślne kryteria** (do zmiany w `config.json`):
 - Dzielnice: **Śródmieście, Stare Miasto, Ołbin, Plac Grunwaldzki, Nadodrze + okolice PWR**
 - **Bez Psiego Pola** (i innych dzielnic spoza listy)
+- **Tylko całe mieszkania** — pokoje, stancje i „szukam współlokatora" są odrzucane
 - Min. **40 m²**, **2 lub 3 pokoje**
 - Najem do **3000 zł**, łącznie z czynszem do **4000 zł**
 - **Prysznic**: odrzuca oferty, które w opisie mówią *tylko o wannie*
@@ -51,6 +52,9 @@ Bot jest zarejestrowany jako zadanie Windows **„MieszkaniaBot"**, które:
 | `district_blocklist` | Dzielnice **zawsze odrzucane**: domyślnie `["Psie Pole"]` |
 | `title_keywords` | Słowa (tytuł / osiedle / ulica), które od razu kwalifikują ofertę |
 | `shower_filter` | `"exclude_bath_only"` (domyślne), `"required"`, lub `"off"` |
+| `whole_flat_only` | `true` = **tylko całe mieszkania**, bez pokoi / stancji / współlokatorów |
+| `room_keywords` | Zwroty oznaczające wynajem pokoju — szukane w tytule **i** opisie |
+| `room_title_keywords` | Zwroty szukane **tylko w tytule** (w opisie bywają niewinne) |
 | `poll_interval_seconds` | Co ile sekund sprawdzać (60 = 1 min) |
 | `max_offer_age_hours` | Maks. wiek oferty liczony od **pierwszej** publikacji (domyślnie 72 h); `0` = wyłącz |
 | `dedup_by_content` | `true` = rozpoznaje tę samą ofertę po treści i zdjęciu, nie tylko po ID |
@@ -68,6 +72,25 @@ Przykłady:
 - Wyłączyć jedno źródło: `"sources": {"olx": true, "otodom": false}`.
 
 ---
+
+## Tylko całe mieszkania (bez pokoi)
+
+`whole_flat_only` (domyślnie `true`) odrzuca oferty wynajmu **pojedynczego pokoju**,
+stancji, kwatery czy szukania współlokatora — nawet jeśli ogłoszenie wisi w kategorii
+„mieszkania". Bot patrzy na:
+
+- **typ ogłoszenia** — Otodom ma osobny typ dla pokoi (`ROOM`), przechodzą tylko `FLAT`;
+- **zwroty w tytule i opisie** — „wynajmę pokój", „pokój do wynajęcia", „stancja",
+  „miejsce w pokoju", „szukam współlokatora", „mieszkanie dzielone", „room for rent"…;
+- **zwroty tylko w tytule** — „za osobę", „od osoby", „kwatery", „hostel", „akademik"
+  (w opisie całego mieszkania mogą wystąpić niewinnie, np. „media ok. 100 zł za osobę");
+- **samo słowo „pokój"** w tytule bez liczebnika przed nim („Pokój 18 m² blisko PWR",
+  „Pokoje Wrocław centrum"). Liczniki pokoi przechodzą normalnie:
+  *„Mieszkanie 2 pokoje", „3-pokojowe", „5 pokoi", „Mieszkanie 1 pokój"*.
+
+Odrzucone oferty widać w logu: `- pomijam (pokoj, nie cale mieszkanie: ...)`.
+Gdyby coś odpadło za ostro, dopisz/usuń zwrot w `room_keywords` albo ustaw
+`"whole_flat_only": false`.
 
 ## Bez powtórek i „odświeżonych" ofert
 

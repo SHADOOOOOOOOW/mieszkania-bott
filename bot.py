@@ -9,6 +9,7 @@ Kryteria (domyslne, do zmiany w config.json):
   - BEZ Psiego Pola
   - min. 40 m2, 2 lub 3 pokoje
   - najem do 3000 zl, z czynszem do 4000 zl
+  - tylko CALE mieszkania (pokoje/stancje/wspollokatorzy odrzucane)
   - odrzuca oferty wspominajace tylko wanne (bez info o lazience -> przepuszcza)
   - bez powtorek: pomija oferty odswiezone/wystawione ponownie (nawet z nowym id)
 
@@ -73,6 +74,35 @@ DEFAULT_CONFIG = {
     "shower_filter": "exclude_bath_only",
     "shower_keywords": ["prysznic", "natrysk"],
     "bath_keywords": ["wann"],
+
+    # --- Tylko cale mieszkania (bez pokoi / stancji / wspollokatorow) ---
+    "whole_flat_only": True,
+    # Zwroty jednoznaczne dla wynajmu POKOJU - sprawdzane w tytule i w opisie.
+    # (porownanie bez polskich znakow i wielkosci liter)
+    "room_keywords": [
+        "wynajme pokoj", "wynajmie pokoj", "wynajem pokoju", "wynajem pokoi",
+        "do wynajecia pokoj", "pokoj do wynajecia", "pokoje do wynajecia",
+        "pokoj do wynajmu", "pokoje do wynajmu", "pokoj na wynajem",
+        "pokoj dla studenta", "pokoj dla studentki", "pokoj dla pary",
+        "pokoj dla jednej osoby", "pokoj dla dwoch",
+        "pokoj jednoosobowy", "pokoj dwuosobowy", "pokoj 1-osobowy", "pokoj 2-osobowy",
+        "pokoj 1 osobowy", "pokoj 2 osobowy", "pokoj z lozkiem",
+        "miejsce w pokoju", "lozko w pokoju", "stancja", "stancje",
+        "kwatera pracownicza", "kwatery pracownicze", "pokoje pracownicze",
+        "miejsca noclegowe", "wspollokator", "wspolokator", "wspollokatork",
+        "wspolne mieszkanie", "mieszkanie dzielone", "dzielone mieszkanie",
+        "do wspoldzielenia", "wspolzamieszkanie", "wynajem wspolny",
+        "room for rent", "rooms for rent", "private room", "single room",
+        "shared flat", "shared apartment", "flatmate", "roommate",
+        "coliving", "co-living",
+    ],
+    # Zwroty sprawdzane TYLKO w tytule - w opisie calego mieszkania moglyby
+    # wystapic niewinnie (np. "media ok. 100 zl za osobe").
+    "room_title_keywords": [
+        "pokoj w mieszkaniu", "pokoj w apartamencie", "pokoj w centrum",
+        "za osobe", "od osoby", "na osobe", "za os", "kwatera", "kwatery",
+        "hostel", "akademik",
+    ],
 
     # --- Anty-duplikaty ---
     # Odrzuca oferty "odswiezone"/wystawione ponownie: liczy sie data PIERWSZEJ
@@ -400,6 +430,7 @@ def parse_otodom(o):
         "osiedle": names.get("residential") or names.get("subdistrict"),
         "street": street,
         "lat": None, "lon": None, "detailed": False,
+        "estate": o.get("estate"),          # FLAT = mieszkanie; ROOM = pokoj
         "photo": photo,
         "created": iso(o.get("dateCreated")),
         # dateCreatedFirst = pierwsza publikacja; dateCreated skacze przy wznowieniu
@@ -442,6 +473,43 @@ def geo_match(offer, cfg):
     return dist_norm in [strip_pl(d) for d in cfg["district_allowlist"]]
 
 
+# "pokoj"/"pokoik" w liczbie pojedynczej (NIE lapie "2 pokoje", "3-pokojowe", "pokoi").
+_ROOM_WORD_RE = re.compile(r"(?<![a-z0-9])(pokoj|pokoju|pokojek|pokoik|pokoiczek)(?![a-z0-9])")
+# Liczebnik tuz przed slowem "pokoj" -> to metraz mieszkania, nie oferta pokoju.
+_ROOM_COUNT_RE = re.compile(r"(\d|jeden|jedno|dwa|trzy|cztery|piec)\s*[-]?\s*$")
+# Tytul zaczynajacy sie od "Pokoje ..." = oferta pokoi; mieszkanie ma z przodu
+# liczbe ("2 pokoje...") albo slowo "mieszkanie".
+_ROOM_TITLE_START_RE = re.compile(
+    r"^(pokoj|pokoje|pokoju|pokojek|pokoi|pokoik|pokoiki)(?![a-z0-9])")
+
+
+def room_reason(offer, cfg):
+    """Zwraca powod, dla ktorego oferta wyglada na wynajem POKOJU (albo None)."""
+    if not cfg.get("whole_flat_only", True):
+        return None
+    # Otodom ma osobny typ ogloszenia dla pokoi - cokolwiek innego niz mieszkanie odpada.
+    if offer.get("estate") and offer["estate"] != "FLAT":
+        return "typ ogloszenia: %s" % offer["estate"]
+
+    title = strip_pl(offer.get("title")).strip(" \t-*!.,:;\"'|/()[]")
+    hay = title + " \n " + strip_pl(offer.get("desc"))
+    for kw in cfg.get("room_keywords", []):
+        k = strip_pl(kw)
+        if k and k in hay:
+            return kw
+    for kw in cfg.get("room_title_keywords", []):
+        k = strip_pl(kw)
+        if k and k in title:
+            return kw + " (tytul)"
+    if _ROOM_TITLE_START_RE.match(title):
+        return "tytul zaczyna sie od 'pokoj...'"
+    # Samo "pokoj" w tytule, bez liczebnika przed nim: "Pokoj 18 m2 Olbin".
+    for m in _ROOM_WORD_RE.finditer(title):
+        if not _ROOM_COUNT_RE.search(title[:m.start()][-12:]):
+            return "'%s' w tytule" % m.group(0)
+    return None
+
+
 def shower_status(offer, cfg):
     desc = strip_pl(offer.get("desc", ""))
     if any(strip_pl(k) in desc for k in cfg["shower_keywords"]):
@@ -458,6 +526,9 @@ def matches(offer, cfg):
         age = age_hours(offer)
         if age is not None and age > float(max_age):
             return False
+    # Wynajem pokoju / stancja / wspollokator - chcemy tylko cale mieszkania.
+    if room_reason(offer, cfg):
+        return False
     if offer["area"] is None or offer["area"] < cfg["min_area"]:
         return False
     if offer["rooms"] not in cfg["rooms"]:
@@ -594,11 +665,18 @@ def run_once(cfg, seen, first_run):
     name = cfg["bot_name"]
     # Najpierw sprawdzamy, potem od razu oznaczamy - dzieki temu duble w jednej
     # paczce (i oferta wystawiona ponownie) odpadaja przed wyslaniem.
-    fresh = []
+    fresh, skipped_rooms = [], 0
     for o in offers:
         was_seen = is_seen(o, seen, cfg)
         mark_seen(o, seen, cfg)
-        if not was_seen and matches(o, cfg):
+        if was_seen:
+            continue
+        why_room = room_reason(o, cfg)
+        if why_room:
+            skipped_rooms += 1
+            print("   - pomijam (pokoj, nie cale mieszkanie: %s) %s" % (why_room, o["title"][:55]))
+            continue
+        if matches(o, cfg):
             fresh.append(o)
 
     if first_run:
@@ -607,7 +685,7 @@ def run_once(cfg, seen, first_run):
         post_to_discord(cfg["discord_webhook"], [{
             "title": "✅ Bot uruchomiony",
             "description": ("Monitoruje OLX + Otodom (Wroclaw).\n"
-                            "Kryteria: {}+ m2, {} pok., najem do {}, z czynszem do {}, wybrane dzielnice (bez Psiego Pola).\n"
+                            "Kryteria: cale mieszkania (bez pokoi), {}+ m2, {} pok., najem do {}, z czynszem do {}, wybrane dzielnice (bez Psiego Pola).\n"
                             "Aktualnie pasujacych: **{}**. Bede wysylac tylko *nowe* (bez odswiezonych i powtorek).".format(
                                 cfg["min_area"], "/".join(map(str, cfg["rooms"])),
                                 zl(cfg["max_price"]), zl(cfg["max_total"]), len(matching))),
@@ -624,7 +702,8 @@ def run_once(cfg, seen, first_run):
         return
 
     if not fresh:
-        print("[%s] Brak nowych pasujacych ogloszen (sprawdzono %d)." % (now(), len(offers)))
+        print("[%s] Brak nowych pasujacych ogloszen (sprawdzono %d, pokoi odrzucono %d)."
+              % (now(), len(offers), skipped_rooms))
         if cfg.get("notify_when_empty"):
             post_to_discord(cfg["discord_webhook"], [], username=name,
                             content=cfg.get("not_found_text", "not found"))
