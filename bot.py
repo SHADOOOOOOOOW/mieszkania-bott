@@ -141,7 +141,8 @@ def load_config():
     else:
         cfg = dict(DEFAULT_CONFIG)   # tryb chmurowy: ustawienia z DEFAULT + zmiennych srodowiskowych
     # Nadpisania ze zmiennych srodowiskowych (GitHub Actions / hosting - sekrety).
-    cfg["discord_webhook"] = os.environ.get("DISCORD_WEBHOOK", cfg["discord_webhook"])
+    # .strip() ratuje przed spacja/nowa linia doklejona przy wklejaniu sekretu.
+    cfg["discord_webhook"] = os.environ.get("DISCORD_WEBHOOK", cfg["discord_webhook"]).strip()
     if os.environ.get("ROLE_ID"):
         cfg["role_id"] = os.environ["ROLE_ID"]
     if os.environ.get("RUN_ONCE") == "1":
@@ -742,11 +743,37 @@ def run_once(cfg, seen, first_run):
     save_seen(seen, cfg)
 
 
+_WH_RE = re.compile(r"^https://(?:discord|discordapp)\.com/api(?:/v\d+)?/webhooks/(\d+)/([^/?\s]+)$")
+
+
+def describe_webhook(raw):
+    """Diagnostyka webhooka do logu Actions - BEZ ujawniania tokenu.
+    Prawidlowy adres: id ~19 cyfr, token ~68 znakow."""
+    if not raw:
+        print("WEBHOOK: pusty! Sekret DISCORD_WEBHOOK nie jest ustawiony.")
+        return
+    trimmed = raw.strip()
+    if trimmed != raw:
+        print("WEBHOOK: uwaga - w sekrecie sa biale znaki na poczatku/koncu (obcinam je).")
+    m = _WH_RE.match(trimmed)
+    if not m:
+        print("WEBHOOK: adres NIE wyglada na poprawny URL webhooka Discorda "
+              "(dlugosc %d znakow). Oczekiwany format: "
+              "https://discord.com/api/webhooks/<19 cyfr>/<68 znakow>." % len(trimmed))
+        return
+    wid, token = m.group(1), m.group(2)
+    print("WEBHOOK: id=%s (%d cyfr), token ma %d znakow (typowo 68), caly adres %d znakow."
+          % (wid, len(wid), len(token), len(trimmed)))
+    if len(token) < 60:
+        print("WEBHOOK: token wyglada na UCIETY - przy wklejaniu urwal sie koniec adresu.")
+
+
 def run_test(cfg):
     """Test na zadanie (TEST_PING=1): odpytuje zrodla, przepuszcza oferty przez
     filtry i wysyla raport na Discorda. NIE dotyka seen.json, wiec nie "zjada"
     zadnej oferty - normalny przebieg wysle ja pozniej jak zwykle."""
     name = cfg["bot_name"]
+    describe_webhook(os.environ.get("DISCORD_WEBHOOK", cfg["discord_webhook"]))
     print("[%s] TEST: odpytuje zrodla..." % now())
     offers = collect_offers(cfg)
     per_src = {}
