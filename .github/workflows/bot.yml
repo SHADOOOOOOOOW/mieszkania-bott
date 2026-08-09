@@ -1,18 +1,17 @@
 name: mieszkania-bot
 
-# BOT ZATRZYMANY - automatyczny harmonogram jest wylaczony.
-# Zostalo tylko reczne uruchomienie (Actions -> mieszkania-bot -> Run workflow).
-#
-# Zeby wlaczyc bota z powrotem, odkomentuj ponizsze dwie linie "schedule":
-# on:
-#   schedule:
-#     - cron: "*/15 * * * *"
-#
-# Jak to dzialalo: GitHub cron nie umie "co minute" (min. 5 min i bywa opozniony),
-# wiec jeden przebieg zyl ~50 minut i sam odpytywal co 60 s, a cron co 15 min
-# pilnowal, zeby po zakonczeniu przebiegu wystartowal nastepny (concurrency
+# Sprawdza oferty co MINUTE - komputer moze byc wylaczony.
+# GitHub cron nie umie "co minute" (min. 5 min i bywa opozniony), wiec jeden
+# przebieg zyje ~50 minut i sam odpytuje co 60 s. Cron co 15 min tylko pilnuje,
+# zeby po zakonczeniu przebiegu od razu wystartowal nastepny (concurrency
 # trzyma dokladnie jeden aktywny + jeden w kolejce).
+#
+# Webhook Discorda NIE jest w repo - siedzi w sekrecie DISCORD_WEBHOOK
+# (Settings -> Secrets and variables -> Actions). Zeby przelaczyc bota na inny
+# kanal, podmien sam sekret - w kodzie nic sie nie zmienia.
 on:
+  schedule:
+    - cron: "*/15 * * * *"
   workflow_dispatch: {}   # pozwala uruchomic recznie z zakladki Actions
 
 permissions:
