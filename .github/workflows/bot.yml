@@ -57,4 +57,6 @@ jobs:
           MAX_MINUTES: "50"   # konczy sie sam przed timeoutem, by zapisac cache
           # Tryb testowy: jeden raport na Discorda i koniec, bez zapisu seen.json.
           TEST_PING: ${{ github.event.inputs.test_ping == 'true' && '1' || '0' }}
-        run: python bot.py
+        # -u = bez buforowania: log widac na biezaco. Bez tego przebieg ubity
+        # w polowie (timeout/cancel) nie zostawia w logu ANI JEDNEJ linijki.
+        run: python -u bot.py
