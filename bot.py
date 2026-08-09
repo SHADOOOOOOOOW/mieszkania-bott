@@ -8,12 +8,15 @@ Kryteria (domyslne, do zmiany w config.json):
   - dzielnice: Srodmiescie, Stare Miasto, Olbin, Plac Grunwaldzki, Nadodrze + okolice PWR
   - BEZ Psiego Pola
   - min. 40 m2, 2 lub 3 pokoje
-  - najem do 3000 zl, z czynszem do 4000 zl
+  - najem od 2500 do 3000 zl, z czynszem do 4000 zl
+  - tylko CALE mieszkania (pokoje/stancje/wspollokatorzy odrzucane)
   - odrzuca oferty wspominajace tylko wanne (bez info o lazience -> przepuszcza)
+  - bez powtorek: pomija oferty odswiezone/wystawione ponownie (nawet z nowym id)
 
 Zero zaleznosci - dziala na czystym Pythonie (>=3.8). Wystarczy wkleic webhook do config.json.
 """
 
+import hashlib
 import json
 import math
 import os
@@ -24,7 +27,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(HERE, "config.json")
@@ -48,6 +51,7 @@ DEFAULT_CONFIG = {
     "sources": {"olx": True, "otodom": True},
 
     "min_area": 40,               # minimalny metraz [m2]
+    "min_price": 2500,            # min. cena najmu (bez czynszu) [zl]; 0 = wylaczone
     "max_price": 3000,            # maks. cena najmu (bez czynszu) [zl]
     "max_total": 4000,            # maks. cena + czynsz [zl]; 0 = wylaczone
     "rooms": [2, 3],              # dozwolona liczba pokoi
@@ -72,6 +76,45 @@ DEFAULT_CONFIG = {
     "shower_keywords": ["prysznic", "natrysk"],
     "bath_keywords": ["wann"],
 
+    # --- Tylko cale mieszkania (bez pokoi / stancji / wspollokatorow) ---
+    "whole_flat_only": True,
+    # Zwroty jednoznaczne dla wynajmu POKOJU - sprawdzane w tytule i w opisie.
+    # (porownanie bez polskich znakow i wielkosci liter)
+    "room_keywords": [
+        "wynajme pokoj", "wynajmie pokoj", "wynajem pokoju", "wynajem pokoi",
+        "do wynajecia pokoj", "pokoj do wynajecia", "pokoje do wynajecia",
+        "pokoj do wynajmu", "pokoje do wynajmu", "pokoj na wynajem",
+        "pokoj dla studenta", "pokoj dla studentki", "pokoj dla pary",
+        "pokoj dla jednej osoby", "pokoj dla dwoch",
+        "pokoj jednoosobowy", "pokoj dwuosobowy", "pokoj 1-osobowy", "pokoj 2-osobowy",
+        "pokoj 1 osobowy", "pokoj 2 osobowy", "pokoj z lozkiem",
+        "miejsce w pokoju", "lozko w pokoju", "stancja", "stancje",
+        "kwatera pracownicza", "kwatery pracownicze", "pokoje pracownicze",
+        "miejsca noclegowe", "wspollokator", "wspolokator", "wspollokatork",
+        "wspolne mieszkanie", "mieszkanie dzielone", "dzielone mieszkanie",
+        "do wspoldzielenia", "wspolzamieszkanie", "wynajem wspolny",
+        "room for rent", "rooms for rent", "private room", "single room",
+        "shared flat", "shared apartment", "flatmate", "roommate",
+        "coliving", "co-living",
+    ],
+    # Zwroty sprawdzane TYLKO w tytule - w opisie calego mieszkania moglyby
+    # wystapic niewinnie (np. "media ok. 100 zl za osobe").
+    "room_title_keywords": [
+        "pokoj w mieszkaniu", "pokoj w apartamencie", "pokoj w centrum",
+        "za osobe", "od osoby", "na osobe", "za os", "kwatera", "kwatery",
+        "hostel", "akademik",
+    ],
+
+    # --- Anty-duplikaty ---
+    # Odrzuca oferty "odswiezone"/wystawione ponownie: liczy sie data PIERWSZEJ
+    # publikacji, wiec podbite stare ogloszenie nie wraca jako nowe. 0 = wylaczone.
+    "max_offer_age_hours": 72,
+    # Oprocz ID porownuje tez trescia (tytul + metraz + pokoje + dzielnica) i
+    # zdjeciem - to lapie oferte wystawiona ponownie z NOWYM id (tez miedzy OLX/Otodom).
+    "dedup_by_content": True,
+    # Jak dlugo pamietac wyslane oferty (dni).
+    "seen_retention_days": 60,
+
     # Ping roli, gdy znajdzie nowe oferty (ID roli @mieszkania; puste = bez pingu).
     "role_id": "",
     # Gdy w danym sprawdzeniu nie ma nowych ofert - domyslnie NIC nie pisz (cisza).
@@ -79,7 +122,9 @@ DEFAULT_CONFIG = {
     "not_found_text": "not found",
 
     "poll_interval_seconds": 60,   # co ile sekund sprawdzac (60 = 1 min)
-    "first_run_posts": 5,          # ile aktualnych ofert wyslac przy pierwszym starcie
+    "first_run_posts": 0,          # ile aktualnych ofert wyslac przy pierwszym starcie
+                                   # (0 = cisza: bot tylko zapamietuje stan, zeby po
+                                   #  utracie cache nie wysylac drugi raz tego samego)
     "max_posts_per_run": 25,       # bezpiecznik przed zalaniem kanalu
     "run_once": False              # True = jedno sprawdzenie i koniec
 }
@@ -112,19 +157,43 @@ def load_config():
     return cfg
 
 
+# Pamiec wyslanych ofert: {klucz: znacznik_czasu}. Kluczy na oferte jest kilka
+# (id, odcisk tresci, zdjecie) - wystarczy trafienie jednego, zeby uznac za znana.
 def load_seen():
-    if os.path.exists(SEEN_PATH):
-        try:
-            with open(SEEN_PATH, "r", encoding="utf-8") as f:
-                return set(json.load(f))
-        except Exception:
-            return set()
-    return set()
+    if not os.path.exists(SEEN_PATH):
+        return {}
+    try:
+        with open(SEEN_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception:
+        return {}
+    ts = time.time()
+    if isinstance(data, list):                      # stary format: lista id
+        return {"id:" + str(k): ts for k in data}
+    if isinstance(data, dict):
+        keys = data.get("keys", data)
+        out = {}
+        if isinstance(keys, dict):
+            for k, v in keys.items():
+                try:
+                    out[str(k)] = float(v)
+                except (TypeError, ValueError):
+                    out[str(k)] = ts
+        return out
+    return {}
 
 
-def save_seen(seen):
-    with open(SEEN_PATH, "w", encoding="utf-8") as f:
-        json.dump(list(seen)[-8000:], f)
+def save_seen(seen, cfg=None):
+    days = (cfg or {}).get("seen_retention_days", 60)
+    cutoff = time.time() - float(days) * 86400
+    items = sorted(((k, v) for k, v in seen.items() if v >= cutoff), key=lambda kv: kv[1])
+    del items[:-60000]                              # twardy limit rozmiaru pliku
+    seen.clear()
+    seen.update(items)                              # trzymamy tez pamiec RAM przycieta
+    tmp = SEEN_PATH + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump({"version": 2, "keys": seen}, f)
+    os.replace(tmp, SEEN_PATH)                      # zapis atomowy - nie zgubimy pliku
 
 
 # --- HTTP ----------------------------------------------------------------------
@@ -167,6 +236,93 @@ def iso(dt):
     return (dt or "").replace(" ", "T")
 
 
+# --- Daty ----------------------------------------------------------------------
+PL_TZ = timezone(timedelta(hours=2))     # daty bez strefy (Otodom) traktujemy jak czas PL
+_DT_RE = re.compile(r"(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2}):(\d{2})"
+                    r"(?:\.\d+)?\s*(Z|[+-]\d{2}:?\d{2})?")
+
+
+def parse_dt(value):
+    m = _DT_RE.search(str(value or ""))
+    if not m:
+        return None
+    y, mo, d, h, mi, s = (int(x) for x in m.groups()[:6])
+    off = m.group(7)
+    if not off:
+        tz = PL_TZ
+    elif off == "Z":
+        tz = timezone.utc
+    else:
+        off = off.replace(":", "")
+        sign = -1 if off[0] == "-" else 1
+        tz = timezone(sign * timedelta(hours=int(off[1:3]), minutes=int(off[3:5])))
+    try:
+        return datetime(y, mo, d, h, mi, s, tzinfo=tz)
+    except ValueError:
+        return None
+
+
+def age_hours(offer):
+    """Wiek oferty liczony od PIERWSZEJ publikacji (nie od odswiezenia)."""
+    dt = parse_dt(offer.get("created_first") or offer.get("created"))
+    if not dt:
+        return None
+    return (datetime.now(timezone.utc) - dt).total_seconds() / 3600.0
+
+
+# --- Anty-duplikaty ------------------------------------------------------------
+def _norm_text(s):
+    return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9]+", " ", strip_pl(s))).strip()
+
+
+def content_key(offer):
+    """Odcisk tresci - ta sama oferta wystawiona ponownie ma inne id, ale to samo
+    ogloszenie (tytul + metraz + pokoje + dzielnica)."""
+    title = _norm_text(offer.get("title"))
+    if len(title) < 8:
+        return None
+    parts = [title,
+             "{:g}".format(offer["area"]) if offer.get("area") else "?",
+             str(offer.get("rooms") or "?"),
+             _norm_text(offer.get("district"))]
+    return hashlib.sha1("|".join(parts).encode("utf-8")).hexdigest()[:16]
+
+
+def photo_key(offer):
+    """Identyfikator zdjecia z CDN - przy ponownym wystawieniu zdjecia sa te same
+    (OLX i Otodom trzymaja je na tym samym CDN, wiec lapie tez duble miedzy serwisami)."""
+    url = (offer.get("photo") or "").split("?")[0].split(";")[0]
+    for seg in reversed([s for s in url.split("/") if s]):
+        seg = re.sub(r"\.(jpe?g|png|webp)$", "", seg.split(":")[0], flags=re.I)
+        if seg.lower() in ("image", "images", "files", "v1", "photo", "photos"):
+            continue
+        if re.match(r"^[A-Za-z0-9_-]{8,}$", seg):
+            return seg.lower()
+    return None
+
+
+def offer_keys(offer, cfg):
+    keys = ["id:" + offer["id"]]
+    if cfg.get("dedup_by_content", True):
+        ck = content_key(offer)
+        if ck:
+            keys.append("fp:" + ck)
+        pk = photo_key(offer)
+        if pk:
+            keys.append("img:" + pk)
+    return keys
+
+
+def is_seen(offer, seen, cfg):
+    return any(k in seen for k in offer_keys(offer, cfg))
+
+
+def mark_seen(offer, seen, cfg):
+    ts = time.time()
+    for k in offer_keys(offer, cfg):
+        seen.setdefault(k, ts)
+
+
 # --- Zrodlo: OLX ---------------------------------------------------------------
 def olx_url(cfg, limit=50):
     params = {
@@ -176,6 +332,8 @@ def olx_url(cfg, limit=50):
         "filter_float_m:from": cfg["min_area"],
         "sort_by": "created_at:desc",
     }
+    if cfg.get("min_price"):
+        params["filter_float_price:from"] = cfg["min_price"]
     query = urllib.parse.urlencode(params, safe=":")
     room_map = {1: "one", 2: "two", 3: "three", 4: "four"}
     parts = ["filter_enum_rooms[%d]=%s" % (i, room_map[r])
@@ -218,6 +376,9 @@ def parse_olx(o):
         "detailed": bool(mp.get("show_detailed")),
         "photo": photo,
         "created": iso(o.get("created_time")),
+        # data pierwszej publikacji - "odswiezenie"/podbicie jej nie zmienia
+        "created_first": iso(o.get("created_time")),
+        "refreshed": iso(o.get("last_refresh_time") or o.get("pushup_time")),
     }
 
 
@@ -235,6 +396,8 @@ def otodom_url(cfg):
         "priceMax": cfg["max_price"], "areaMin": cfg["min_area"],
         "roomsNumber": "[%s]" % ",".join(rooms),
     }
+    if cfg.get("min_price"):
+        params["priceMin"] = cfg["min_price"]
     return OTODOM_URL + "?" + urllib.parse.urlencode(params)
 
 
@@ -272,8 +435,12 @@ def parse_otodom(o):
         "osiedle": names.get("residential") or names.get("subdistrict"),
         "street": street,
         "lat": None, "lon": None, "detailed": False,
+        "estate": o.get("estate"),          # FLAT = mieszkanie; ROOM = pokoj
         "photo": photo,
         "created": iso(o.get("dateCreated")),
+        # dateCreatedFirst = pierwsza publikacja; dateCreated skacze przy wznowieniu
+        "created_first": iso(o.get("dateCreatedFirst") or o.get("dateCreated")),
+        "refreshed": iso(o.get("pushedUpAt") or o.get("dateCreated")),
     }
 
 
@@ -311,6 +478,43 @@ def geo_match(offer, cfg):
     return dist_norm in [strip_pl(d) for d in cfg["district_allowlist"]]
 
 
+# "pokoj"/"pokoik" w liczbie pojedynczej (NIE lapie "2 pokoje", "3-pokojowe", "pokoi").
+_ROOM_WORD_RE = re.compile(r"(?<![a-z0-9])(pokoj|pokoju|pokojek|pokoik|pokoiczek)(?![a-z0-9])")
+# Liczebnik tuz przed slowem "pokoj" -> to metraz mieszkania, nie oferta pokoju.
+_ROOM_COUNT_RE = re.compile(r"(\d|jeden|jedno|dwa|trzy|cztery|piec)\s*[-]?\s*$")
+# Tytul zaczynajacy sie od "Pokoje ..." = oferta pokoi; mieszkanie ma z przodu
+# liczbe ("2 pokoje...") albo slowo "mieszkanie".
+_ROOM_TITLE_START_RE = re.compile(
+    r"^(pokoj|pokoje|pokoju|pokojek|pokoi|pokoik|pokoiki)(?![a-z0-9])")
+
+
+def room_reason(offer, cfg):
+    """Zwraca powod, dla ktorego oferta wyglada na wynajem POKOJU (albo None)."""
+    if not cfg.get("whole_flat_only", True):
+        return None
+    # Otodom ma osobny typ ogloszenia dla pokoi - cokolwiek innego niz mieszkanie odpada.
+    if offer.get("estate") and offer["estate"] != "FLAT":
+        return "typ ogloszenia: %s" % offer["estate"]
+
+    title = strip_pl(offer.get("title")).strip(" \t-*!.,:;\"'|/()[]")
+    hay = title + " \n " + strip_pl(offer.get("desc"))
+    for kw in cfg.get("room_keywords", []):
+        k = strip_pl(kw)
+        if k and k in hay:
+            return kw
+    for kw in cfg.get("room_title_keywords", []):
+        k = strip_pl(kw)
+        if k and k in title:
+            return kw + " (tytul)"
+    if _ROOM_TITLE_START_RE.match(title):
+        return "tytul zaczyna sie od 'pokoj...'"
+    # Samo "pokoj" w tytule, bez liczebnika przed nim: "Pokoj 18 m2 Olbin".
+    for m in _ROOM_WORD_RE.finditer(title):
+        if not _ROOM_COUNT_RE.search(title[:m.start()][-12:]):
+            return "'%s' w tytule" % m.group(0)
+    return None
+
+
 def shower_status(offer, cfg):
     desc = strip_pl(offer.get("desc", ""))
     if any(strip_pl(k) in desc for k in cfg["shower_keywords"]):
@@ -321,11 +525,22 @@ def shower_status(offer, cfg):
 
 
 def matches(offer, cfg):
+    # Oferta "odswiezona"/wznowiona: nowa na liscie, ale opublikowana dawno temu.
+    max_age = cfg.get("max_offer_age_hours") or 0
+    if max_age:
+        age = age_hours(offer)
+        if age is not None and age > float(max_age):
+            return False
+    # Wynajem pokoju / stancja / wspollokator - chcemy tylko cale mieszkania.
+    if room_reason(offer, cfg):
+        return False
     if offer["area"] is None or offer["area"] < cfg["min_area"]:
         return False
     if offer["rooms"] not in cfg["rooms"]:
         return False
     if offer["price"] is None or offer["price"] > cfg["max_price"]:
+        return False
+    if cfg.get("min_price") and offer["price"] < cfg["min_price"]:
         return False
     if cfg.get("max_total") and offer["total"] and offer["total"] > cfg["max_total"]:
         return False
@@ -437,12 +652,14 @@ def collect_offers(cfg):
             offers += fetch_otodom(cfg)
         except Exception as e:
             print("[%s] Blad Otodom: %s" % (now(), e))
-    # Dedup po id (Otodom potrafi zwrocic te sama oferte 2x: promowana + zwykla).
-    uniq, ids = [], set()
+    # Dedup w obrebie jednego sprawdzenia: po id (Otodom zwraca te sama oferte 2x:
+    # promowana + zwykla) oraz po tresci/zdjeciu (ta sama oferta na OLX i Otodom).
+    uniq, keys = [], set()
     for o in offers:
-        if o["id"] in ids:
+        ok = offer_keys(o, cfg)
+        if any(k in keys for k in ok):
             continue
-        ids.add(o["id"])
+        keys.update(ok)
         uniq.append(o)
     return uniq
 
@@ -453,38 +670,61 @@ def run_once(cfg, seen, first_run):
         print("[%s] Brak danych z zrodel (chwilowy problem sieci?)." % now())
         return
     name = cfg["bot_name"]
-    fresh = [o for o in offers if o["id"] not in seen and matches(o, cfg)]
+    # Najpierw sprawdzamy, potem od razu oznaczamy - dzieki temu duble w jednej
+    # paczce (i oferta wystawiona ponownie) odpadaja przed wyslaniem.
+    fresh, skipped_rooms = [], 0
     for o in offers:
-        seen.add(o["id"])
+        was_seen = is_seen(o, seen, cfg)
+        mark_seen(o, seen, cfg)
+        if was_seen:
+            continue
+        why_room = room_reason(o, cfg)
+        if why_room:
+            skipped_rooms += 1
+            print("   - pomijam (pokoj, nie cale mieszkanie: %s) %s" % (why_room, o["title"][:55]))
+            continue
+        if matches(o, cfg):
+            fresh.append(o)
 
     if first_run:
         matching = [o for o in offers if matches(o, cfg)]
+        limit = int(cfg.get("first_run_posts", 0) or 0)
         post_to_discord(cfg["discord_webhook"], [{
             "title": "✅ Bot uruchomiony",
             "description": ("Monitoruje OLX + Otodom (Wroclaw).\n"
-                            "Kryteria: {}+ m2, {} pok., najem do {}, z czynszem do {}, wybrane dzielnice (bez Psiego Pola).\n"
-                            "Aktualnie pasujacych: **{}**. Bede wysylac tylko *nowe*.".format(
+                            "Kryteria: cale mieszkania (bez pokoi), {}+ m2, {} pok., najem {}, z czynszem do {}, wybrane dzielnice (bez Psiego Pola).\n"
+                            "Aktualnie pasujacych: **{}**. Bede wysylac tylko *nowe* (bez odswiezonych i powtorek).".format(
                                 cfg["min_area"], "/".join(map(str, cfg["rooms"])),
-                                zl(cfg["max_price"]), zl(cfg["max_total"]), len(matching))),
+                                ("od %s do %s" % (zl(cfg["min_price"]), zl(cfg["max_price"])))
+                                if cfg.get("min_price") else ("do " + zl(cfg["max_price"])),
+                                zl(cfg["max_total"]), len(matching))),
             "color": 0x3498db}], username=name)
-        for o in sorted(matching, key=lambda x: x.get("created") or "")[-cfg.get("first_run_posts", 5):]:
+        # limit = 0 -> nie wysylamy nic, tylko zapamietujemy stan (bez powtorek
+        # po utracie cache seen.json w chmurze).
+        newest = sorted(matching, key=lambda x: x.get("created") or "")[-limit:] if limit else []
+        for o in newest:
             post_to_discord(cfg["discord_webhook"], [to_embed(o, cfg)], username=name)
             time.sleep(1)
-        save_seen(seen)
-        print("[%s] Pierwszy start: pobrano %d, pasujacych %d." % (now(), len(offers), len(matching)))
+        save_seen(seen, cfg)
+        print("[%s] Pierwszy start: pobrano %d, pasujacych %d (wyslano %d)."
+              % (now(), len(offers), len(matching), limit))
         return
 
     if not fresh:
-        print("[%s] Brak nowych pasujacych ogloszen (sprawdzono %d)." % (now(), len(offers)))
+        print("[%s] Brak nowych pasujacych ogloszen (sprawdzono %d, pokoi odrzucono %d)."
+              % (now(), len(offers), skipped_rooms))
         if cfg.get("notify_when_empty"):
             post_to_discord(cfg["discord_webhook"], [], username=name,
                             content=cfg.get("not_found_text", "not found"))
-        save_seen(seen)
+        save_seen(seen, cfg)
         return
 
     fresh.sort(key=lambda o: o.get("created") or "")
     fresh = fresh[-cfg["max_posts_per_run"]:]
     print("[%s] Nowe pasujace: %d" % (now(), len(fresh)))
+    # Zapis PRZED wysylka: gdy przebieg padnie/zostanie ubity w polowie paczki,
+    # po restarcie nie wysle tych samych ofert jeszcze raz.
+    save_seen(seen, cfg)
 
     # Ping roli @mieszkania jednym komunikatem, potem oferty.
     rid = str(cfg.get("role_id") or "").strip()
@@ -499,7 +739,7 @@ def run_once(cfg, seen, first_run):
         post_to_discord(cfg["discord_webhook"], [to_embed(o, cfg)], username=name)
         print("   + [%s] %s | %s | %s" % (o["source"], zl(o["price"]),
               o.get("district"), o["title"][:55]))
-    save_seen(seen)
+    save_seen(seen, cfg)
 
 
 def main():

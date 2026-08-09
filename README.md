@@ -6,8 +6,9 @@ na Twój kanał Discord. Sprawdza co minutę i wrzuca **tylko nowe** oferty.
 **Domyślne kryteria** (do zmiany w `config.json`):
 - Dzielnice: **Śródmieście, Stare Miasto, Ołbin, Plac Grunwaldzki, Nadodrze + okolice PWR**
 - **Bez Psiego Pola** (i innych dzielnic spoza listy)
+- **Tylko całe mieszkania** — pokoje, stancje i „szukam współlokatora" są odrzucane
 - Min. **40 m²**, **2 lub 3 pokoje**
-- Najem do **3000 zł**, łącznie z czynszem do **4000 zł**
+- Najem od **2500 zł** do **3000 zł**, łącznie z czynszem do **4000 zł**
 - **Prysznic**: odrzuca oferty, które w opisie mówią *tylko o wannie*
   (oferty bez info o łazience przechodzą — oznaczone ❔, dopytaj właściciela)
 
@@ -42,6 +43,7 @@ Bot jest zarejestrowany jako zadanie Windows **„MieszkaniaBot"**, które:
 | `bot_name` | Nazwa, pod którą bot pisze na kanale |
 | `sources` | Które serwisy sprawdzać, np. `{"olx": true, "otodom": true}` |
 | `min_area` | Minimalny metraż (m²) |
+| `min_price` | Min. cena najmu bez czynszu (zł); `0` = wyłącz |
 | `max_price` | Maks. cena najmu bez czynszu (zł) |
 | `max_total` | Maks. cena **z czynszem** (zł); `0` = wyłącz |
 | `rooms` | Lista dozwolonej liczby pokoi, np. `[2, 3]` |
@@ -51,8 +53,14 @@ Bot jest zarejestrowany jako zadanie Windows **„MieszkaniaBot"**, które:
 | `district_blocklist` | Dzielnice **zawsze odrzucane**: domyślnie `["Psie Pole"]` |
 | `title_keywords` | Słowa (tytuł / osiedle / ulica), które od razu kwalifikują ofertę |
 | `shower_filter` | `"exclude_bath_only"` (domyślne), `"required"`, lub `"off"` |
+| `whole_flat_only` | `true` = **tylko całe mieszkania**, bez pokoi / stancji / współlokatorów |
+| `room_keywords` | Zwroty oznaczające wynajem pokoju — szukane w tytule **i** opisie |
+| `room_title_keywords` | Zwroty szukane **tylko w tytule** (w opisie bywają niewinne) |
 | `poll_interval_seconds` | Co ile sekund sprawdzać (60 = 1 min) |
-| `first_run_posts` | Ile ofert wysłać przy pierwszym starcie |
+| `max_offer_age_hours` | Maks. wiek oferty liczony od **pierwszej** publikacji (domyślnie 72 h); `0` = wyłącz |
+| `dedup_by_content` | `true` = rozpoznaje tę samą ofertę po treści i zdjęciu, nie tylko po ID |
+| `seen_retention_days` | Ile dni pamiętać wysłane oferty (domyślnie 60) |
+| `first_run_posts` | Ile ofert wysłać przy pierwszym starcie (domyślnie `0` = cisza) |
 | `max_posts_per_run` | Limit ogłoszeń na jedno sprawdzenie |
 | `run_once` | `true` = jedno sprawdzenie i koniec |
 
@@ -65,6 +73,49 @@ Przykłady:
 - Wyłączyć jedno źródło: `"sources": {"olx": true, "otodom": false}`.
 
 ---
+
+## Tylko całe mieszkania (bez pokoi)
+
+`whole_flat_only` (domyślnie `true`) odrzuca oferty wynajmu **pojedynczego pokoju**,
+stancji, kwatery czy szukania współlokatora — nawet jeśli ogłoszenie wisi w kategorii
+„mieszkania". Bot patrzy na:
+
+- **typ ogłoszenia** — Otodom ma osobny typ dla pokoi (`ROOM`), przechodzą tylko `FLAT`;
+- **zwroty w tytule i opisie** — „wynajmę pokój", „pokój do wynajęcia", „stancja",
+  „miejsce w pokoju", „szukam współlokatora", „mieszkanie dzielone", „room for rent"…;
+- **zwroty tylko w tytule** — „za osobę", „od osoby", „kwatery", „hostel", „akademik"
+  (w opisie całego mieszkania mogą wystąpić niewinnie, np. „media ok. 100 zł za osobę");
+- **samo słowo „pokój"** w tytule bez liczebnika przed nim („Pokój 18 m² blisko PWR",
+  „Pokoje Wrocław centrum"). Liczniki pokoi przechodzą normalnie:
+  *„Mieszkanie 2 pokoje", „3-pokojowe", „5 pokoi", „Mieszkanie 1 pokój"*.
+
+Odrzucone oferty widać w logu: `- pomijam (pokoj, nie cale mieszkanie: ...)`.
+Gdyby coś odpadło za ostro, dopisz/usuń zwrot w `room_keywords` albo ustaw
+`"whole_flat_only": false`.
+
+## Bez powtórek i „odświeżonych" ofert
+
+Ta sama oferta nie przyjdzie drugi raz — bot pilnuje tego na cztery sposoby:
+
+1. **Wiek oferty** (`max_offer_age_hours`, domyślnie 72 h) — liczony od **pierwszej**
+   publikacji (OLX `created_time`, Otodom `dateCreatedFirst`). Ogłoszenie „odświeżone"
+   / podbite wraca na górę listy, ale jego pierwotna data się nie zmienia, więc bot
+   je pomija.
+2. **Odcisk treści** — tytuł + metraż + pokoje + dzielnica. Łapie ofertę **wystawioną
+   ponownie z nowym ID** (skasowana i dodana od nowa, też po zmianie ceny).
+3. **Zdjęcie** — identyfikator z CDN. OLX i Otodom trzymają zdjęcia na tym samym
+   serwerze, więc to samo mieszkanie wystawione w obu serwisach leci tylko raz.
+4. **Trwała pamięć** (`seen.json`) — zapis atomowy i **przed** wysyłką, z datami i
+   czyszczeniem po `seen_retention_days`. Wcześniej plik potrafił zgubić część
+   wpisów przy przycinaniu.
+
+Dodatkowo `first_run_posts` domyślnie wynosi **0**: przy pierwszym starcie (albo gdy
+w chmurze przepadnie cache `seen.json`) bot tylko zapamiętuje aktualny stan i nic nie
+wysyła — właśnie to powodowało powtórne wysyłanie tych samych 5 ofert. Ustaw np.
+`"first_run_posts": 3`, jeśli chcesz podgląd przy starcie.
+
+Jeśli któraś oferta zostanie odrzucona za ostro (np. bot ma pokazywać też starsze
+ogłoszenia): zwiększ `max_offer_age_hours` albo ustaw `"dedup_by_content": false`.
 
 ## Jak działa lokalizacja
 

@@ -5,6 +5,10 @@ name: mieszkania-bot
 # przebieg zyje ~50 minut i sam odpytuje co 60 s. Cron co 15 min tylko pilnuje,
 # zeby po zakonczeniu przebiegu od razu wystartowal nastepny (concurrency
 # trzyma dokladnie jeden aktywny + jeden w kolejce).
+#
+# Webhook Discorda NIE jest w repo - siedzi w sekrecie DISCORD_WEBHOOK
+# (Settings -> Secrets and variables -> Actions). Zeby przelaczyc bota na inny
+# kanal, podmien sam sekret - w kodzie nic sie nie zmienia.
 on:
   schedule:
     - cron: "*/15 * * * *"
