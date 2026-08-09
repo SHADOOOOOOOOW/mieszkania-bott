@@ -606,6 +606,10 @@ def to_embed(offer, cfg):
     return embed
 
 
+class WebhookError(Exception):
+    """Webhook jest nieprawidlowy - ponawianie nic nie da, trzeba poprawic sekret."""
+
+
 def post_to_discord(webhook, embeds, username, content=None, allowed_mentions=None):
     payload = {"username": username, "embeds": embeds}
     if content:
@@ -628,6 +632,13 @@ def post_to_discord(webhook, embeds, username, content=None, allowed_mentions=No
                     retry = 2
                 time.sleep(float(retry) + 0.5)
                 continue
+            if e.code in (401, 403, 404):
+                # Zly/skasowany webhook - dalsze przebiegi tylko "zjadalyby" oferty
+                # (oznaczaly je jako wyslane), wiec przerywamy caly przebieg.
+                raise WebhookError(
+                    "Discord HTTP %s: %s - webhook jest nieprawidlowy. "
+                    "Skopiuj adres ponownie przyciskiem 'Kopiuj URL webhooka' "
+                    "i podmien sekret DISCORD_WEBHOOK." % (e.code, e.reason))
             print("Discord HTTP %s: %s" % (e.code, e.reason))
             return False
         except Exception as e:
@@ -796,10 +807,14 @@ def run_test(cfg):
     if not offers:
         lines.append("\n⚠️ Zadne zrodlo nie odpowiedzialo - sprawdz log przebiegu.")
 
-    ok = post_to_discord(cfg["discord_webhook"], [{
-        "title": "🧪 Test polaczenia - bot dziala",
-        "description": "\n".join(lines),
-        "color": 0xf1c40f}], username=name)
+    try:
+        ok = post_to_discord(cfg["discord_webhook"], [{
+            "title": "🧪 Test polaczenia - bot dziala",
+            "description": "\n".join(lines),
+            "color": 0xf1c40f}], username=name)
+    except WebhookError as e:
+        print("TEST: %s" % e)
+        ok = False
 
     # Przykladowa oferta - pokazuje, ze formatowanie i zdjecia tez dzialaja.
     if ok and matching:
@@ -822,7 +837,11 @@ def main():
     first_run = len(seen) == 0
     print("Bot '%s' wystartowal. Sprawdzanie co %d s. Ctrl+C aby zatrzymac."
           % (cfg["bot_name"], cfg["poll_interval_seconds"]))
-    run_once(cfg, seen, first_run)
+    try:
+        run_once(cfg, seen, first_run)
+    except WebhookError as e:
+        print("[%s] KONIEC: %s" % (now(), e))
+        sys.exit(1)
     if cfg["run_once"]:
         return
     # W chmurze (GitHub Actions) job ma limit czasu - konczymy sami, zeby zdazyc
@@ -836,6 +855,11 @@ def main():
                 break
             time.sleep(cfg["poll_interval_seconds"])
             run_once(cfg, seen, first_run=False)
+        except WebhookError as e:
+            # Nie ma sensu odpytywac dalej - oferty bylyby oznaczane jako wyslane,
+            # a nie docieralyby na kanal. Czerwony przebieg w Actions = widac problem.
+            print("[%s] KONIEC: %s" % (now(), e))
+            sys.exit(1)
         except KeyboardInterrupt:
             print("\nZatrzymano.")
             break
