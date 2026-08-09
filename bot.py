@@ -742,8 +742,55 @@ def run_once(cfg, seen, first_run):
     save_seen(seen, cfg)
 
 
+def run_test(cfg):
+    """Test na zadanie (TEST_PING=1): odpytuje zrodla, przepuszcza oferty przez
+    filtry i wysyla raport na Discorda. NIE dotyka seen.json, wiec nie "zjada"
+    zadnej oferty - normalny przebieg wysle ja pozniej jak zwykle."""
+    name = cfg["bot_name"]
+    print("[%s] TEST: odpytuje zrodla..." % now())
+    offers = collect_offers(cfg)
+    per_src = {}
+    for o in offers:
+        per_src[o["source"]] = per_src.get(o["source"], 0) + 1
+    rooms = [o for o in offers if room_reason(o, cfg)]
+    matching = [o for o in offers if matches(o, cfg)]
+
+    src_txt = ", ".join("%s: %d" % (k, v) for k, v in sorted(per_src.items())) or "brak danych"
+    lines = [
+        "Pobrane oferty - %s" % src_txt,
+        "Odrzucone jako pokoje/stancje: **%d**" % len(rooms),
+        "Pasujace do kryteriow: **%d**" % len(matching),
+        "",
+        "Kryteria: cale mieszkania, {}+ m2, {} pok., najem {}-{}, z czynszem do {}, do {} h od publikacji.".format(
+            cfg["min_area"], "/".join(map(str, cfg["rooms"])),
+            zl(cfg.get("min_price")), zl(cfg["max_price"]), zl(cfg["max_total"]),
+            cfg.get("max_offer_age_hours") or "bez limitu"),
+    ]
+    if not offers:
+        lines.append("\n⚠️ Zadne zrodlo nie odpowiedzialo - sprawdz log przebiegu.")
+
+    ok = post_to_discord(cfg["discord_webhook"], [{
+        "title": "🧪 Test polaczenia - bot dziala",
+        "description": "\n".join(lines),
+        "color": 0xf1c40f}], username=name)
+
+    # Przykladowa oferta - pokazuje, ze formatowanie i zdjecia tez dzialaja.
+    if ok and matching:
+        newest = sorted(matching, key=lambda x: x.get("created") or "")[-1]
+        post_to_discord(cfg["discord_webhook"], [to_embed(newest, cfg)], username=name,
+                        content="Przyklad najnowszej pasujacej oferty (test, nie jest to nowe ogloszenie):")
+
+    print("[%s] TEST: pobrano %d (%s), pokoi %d, pasujacych %d, wysylka na Discord: %s"
+          % (now(), len(offers), src_txt, len(rooms), len(matching), "OK" if ok else "BLAD"))
+    if not ok:
+        sys.exit(1)
+
+
 def main():
     cfg = load_config()
+    if os.environ.get("TEST_PING") == "1":
+        run_test(cfg)
+        return
     seen = load_seen()
     first_run = len(seen) == 0
     print("Bot '%s' wystartowal. Sprawdzanie co %d s. Ctrl+C aby zatrzymac."

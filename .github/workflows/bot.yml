@@ -12,13 +12,20 @@ name: mieszkania-bot
 on:
   schedule:
     - cron: "*/15 * * * *"
-  workflow_dispatch: {}   # pozwala uruchomic recznie z zakladki Actions
+  workflow_dispatch:      # pozwala uruchomic recznie z zakladki Actions
+    inputs:
+      test_ping:
+        description: "Test: sprawdz zrodla i wyslij raport na Discorda (nic nie zapamietuje)"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
+# Test dostaje wlasna grupe, wiec nie czeka w kolejce za trwajacym przebiegiem
+# monitorujacym (ten zyje ~50 minut).
 concurrency:
-  group: mieszkania-bot
+  group: mieszkania-bot${{ github.event.inputs.test_ping == 'true' && '-test' || '' }}
   cancel-in-progress: false
 
 jobs:
@@ -48,4 +55,6 @@ jobs:
           DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
           ROLE_ID: ${{ secrets.ROLE_ID }}
           MAX_MINUTES: "50"   # konczy sie sam przed timeoutem, by zapisac cache
+          # Tryb testowy: jeden raport na Discorda i koniec, bez zapisu seen.json.
+          TEST_PING: ${{ github.event.inputs.test_ping == 'true' && '1' || '0' }}
         run: python bot.py
